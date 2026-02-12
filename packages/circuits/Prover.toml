@@ -1,0 +1,9 @@
+# Sample prover inputs for the bid range proof circuit
+
+# Private inputs
+bid_amount = "100"
+salt = "42"
+
+# Public inputs
+min_price = "50"
+commitment = ""  # Will be computed from bid_amount and salt
