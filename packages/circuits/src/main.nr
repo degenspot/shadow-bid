@@ -5,13 +5,13 @@
 ///
 /// Public inputs:
 ///   - min_price: The minimum acceptable bid
-///   - commitment: The Poseidon hash commitment of the bid
+///   - commitment: The Pedersen hash commitment of the bid
 ///
 /// Private inputs:
 ///   - bid_amount: The actual bid value (kept secret)
 ///   - salt: Random salt used in the commitment
 
-/// Main circuit function — proves bid validity
+/// Main circuit function - proves bid validity
 fn main(
     bid_amount: Field,     // private: actual bid value
     salt: Field,           // private: random salt for commitment
@@ -19,17 +19,14 @@ fn main(
     commitment: pub Field, // public: hash(bid_amount, salt)
 ) {
     // 1. Prove bid_amount >= min_price
-    //    We verify this by checking (bid_amount - min_price) is non-negative
-    let diff = bid_amount - min_price;
-    
-    // Range check: diff must fit in a reasonable bit width (e.g., 128 bits)
-    // This implicitly proves bid_amount >= min_price
-    let diff_as_u128 = diff as u64; // Noir will constrain this cast
-    assert(diff_as_u128 >= 0, "Bid must be >= min_price");
+    //    Cast to u64 to enforce range check (Noir constrains the cast)
+    let bid_u64 = bid_amount as u64;
+    let min_u64 = min_price as u64;
+    assert(bid_u64 >= min_u64, "Bid must be >= min_price");
 
     // 2. Verify commitment matches hash(bid_amount, salt)
-    //    Using Poseidon hash for Starknet compatibility
-    let computed_commitment = std::hash::poseidon::bn254::hash_2(bid_amount, salt);
+    //    Using Pedersen hash (available in Noir stdlib, compatible with Cairo)
+    let computed_commitment = std::hash::pedersen_hash([bid_amount, salt]);
     assert(commitment == computed_commitment, "Commitment mismatch");
 }
 
@@ -39,6 +36,36 @@ fn test_valid_bid() {
     let bid = 100;
     let salt = 42;
     let min = 50;
-    let commitment = std::hash::poseidon::bn254::hash_2(bid, salt);
+    let commitment = std::hash::pedersen_hash([bid, salt]);
     main(bid, salt, min, commitment);
+}
+
+#[test]
+fn test_bid_at_minimum() {
+    // A bid exactly at the minimum price
+    let bid = 50;
+    let salt = 123;
+    let min = 50;
+    let commitment = std::hash::pedersen_hash([bid, salt]);
+    main(bid, salt, min, commitment);
+}
+
+#[test(should_fail_with = "Bid must be >= min_price")]
+fn test_bid_below_minimum() {
+    // A bid of 10 with min_price of 50 should fail
+    let bid = 10;
+    let salt = 42;
+    let min = 50;
+    let commitment = std::hash::pedersen_hash([bid, salt]);
+    main(bid, salt, min, commitment);
+}
+
+#[test(should_fail_with = "Commitment mismatch")]
+fn test_wrong_commitment() {
+    // A bid of 100 with wrong commitment should fail
+    let bid = 100;
+    let salt = 42;
+    let min = 50;
+    let wrong_commitment = std::hash::pedersen_hash([bid, 999]); // wrong salt
+    main(bid, salt, min, wrong_commitment);
 }

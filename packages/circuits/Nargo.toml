@@ -2,6 +2,6 @@
 name = "shadow_bid_circuits"
 type = "bin"
 authors = ["ShadowBid Team"]
-compiler_version = ">=1.0.0-beta.3"
+compiler_version = ">=1.0.0"
 
 [dependencies]
