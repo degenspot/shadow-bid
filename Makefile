@@ -91,7 +91,7 @@ prove-circuit:
 
 gen-verifier:
 	@echo "⚙️  Generating Cairo verifier from Noir circuit..."
-	cd $(CONTRACT_DIR) && source ~/.zshrc && conda activate garaga-env && \
+	cd $(CONTRACT_DIR) && . $(HOME)/anaconda3/etc/profile.d/conda.sh && conda activate garaga-env && \
 		PATH="$(HOME)/.asdf/installs/scarb/2.15.1/bin:$$PATH" garaga gen \
 		--system ultra_keccak_zk_honk \
 		--vk $(CURDIR)/$(CIRCUIT_DIR)/target/vk \
