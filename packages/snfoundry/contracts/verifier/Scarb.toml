@@ -8,6 +8,8 @@ edition = "2024_07"
 garaga = { git = "https://github.com/keep-starknet-strange/garaga.git", tag = "v1.0.1" }
 starknet = "2.14.0"
 
+[lib]
+
 [cairo]
 sierra-replace-ids = false
 inlining-strategy = 2
