@@ -1,8 +1,42 @@
-/// ShadowBid — Private Sealed-Bid Auction Contract
+/// ShadowBid - Private Sealed-Bid Auction Contract
 ///
 /// A privacy-preserving sealed-bid auction platform where bids are committed
 /// as hashes during the bidding phase and revealed after the deadline.
-/// ZK proofs ensure bid validity without revealing amounts.
+/// ZK proofs (via Garaga verifier) ensure bid validity without revealing amounts.
+
+// ============================================================
+//                  VERIFIER INTERFACE
+// ============================================================
+
+/// Interface for the Garaga-generated UltraKeccakZKHonk verifier contract.
+/// Defined locally to avoid cross-package dependency issues.
+#[starknet::interface]
+pub trait IUltraKeccakZKHonkVerifier<TContractState> {
+    fn verify_ultra_keccak_zk_honk_proof(
+        self: @TContractState, full_proof_with_hints: Span<felt252>,
+    ) -> Result<Span<u256>, felt252>;
+}
+
+// ============================================================
+//                  ERC20 INTERFACE
+// ============================================================
+
+/// Minimal ERC20 interface for token transfers.
+#[starknet::interface]
+pub trait IERC20<TContractState> {
+    fn transfer(ref self: TContractState, recipient: starknet::ContractAddress, amount: u256) -> bool;
+    fn transfer_from(
+        ref self: TContractState,
+        sender: starknet::ContractAddress,
+        recipient: starknet::ContractAddress,
+        amount: u256,
+    ) -> bool;
+    fn balance_of(self: @TContractState, account: starknet::ContractAddress) -> u256;
+}
+
+// ============================================================
+//                  SHADOWBID INTERFACE
+// ============================================================
 
 #[starknet::interface]
 pub trait IShadowBid<TContractState> {
@@ -15,11 +49,12 @@ pub trait IShadowBid<TContractState> {
         reveal_duration: u64,
     ) -> u256;
 
-    /// Submit a sealed bid (commitment hash + ZK proof of validity)
+    /// Submit a sealed bid with ZK proof of validity
+    /// The proof encodes: bid_amount >= min_price AND commitment == pedersen(bid_amount, salt)
     fn submit_bid(
         ref self: TContractState,
         auction_id: u256,
-        bid_commitment: felt252,
+        proof: Span<felt252>,
         deposit: u256,
     );
 
@@ -31,15 +66,15 @@ pub trait IShadowBid<TContractState> {
         salt: felt252,
     );
 
-    /// Settle the auction after reveal phase ends — determines winner
+    /// Settle the auction after reveal phase ends - determines winner
     fn settle_auction(ref self: TContractState, auction_id: u256);
 
     /// Withdraw refund for losing bidders after settlement
     fn withdraw_refund(ref self: TContractState, auction_id: u256);
 
-    // =============================================================
-    //                          VIEW FUNCTIONS
-    // =============================================================
+    // =========================================================
+    //                      VIEW FUNCTIONS
+    // =========================================================
 
     /// Get auction details
     fn get_auction(self: @TContractState, auction_id: u256) -> AuctionInfo;
@@ -51,13 +86,16 @@ pub trait IShadowBid<TContractState> {
     fn has_bid(self: @TContractState, auction_id: u256, bidder: starknet::ContractAddress) -> bool;
 
     /// Check if a bidder has revealed their bid
-    fn has_revealed(self: @TContractState, auction_id: u256, bidder: starknet::ContractAddress) -> bool;
+    fn has_revealed(
+        self: @TContractState, auction_id: u256, bidder: starknet::ContractAddress,
+    ) -> bool;
 }
 
 /// Auction states
 #[derive(Drop, Copy, Serde, starknet::Store, PartialEq)]
 pub enum AuctionState {
     /// Auction is open for bids
+    #[default]
     Open,
     /// Bidding closed, reveals are accepted
     Revealing,
@@ -87,10 +125,15 @@ pub mod ShadowBid {
         Map, StorageMapReadAccess, StorageMapWriteAccess, StoragePointerReadAccess,
         StoragePointerWriteAccess,
     };
-    use starknet::{ContractAddress, get_caller_address, get_block_timestamp};
-    use core::poseidon::poseidon_hash_span;
+    use starknet::{ContractAddress, ClassHash, get_caller_address, get_block_timestamp, get_contract_address};
+    use core::pedersen::PedersenTrait;
+    use core::hash::HashStateTrait;
     use core::num::traits::Zero;
-    use super::{IShadowBid, AuctionState, AuctionInfo};
+    use super::{
+        IShadowBid, AuctionState, AuctionInfo,
+        IUltraKeccakZKHonkVerifierLibraryDispatcher, IUltraKeccakZKHonkVerifierDispatcherTrait,
+        IERC20Dispatcher, IERC20DispatcherTrait,
+    };
 
     // =============================================================
     //                          STORAGE
@@ -98,6 +141,10 @@ pub mod ShadowBid {
 
     #[storage]
     struct Storage {
+        /// Class hash of the ZK verifier contract
+        verifier_class_hash: ClassHash,
+        /// Address of the ERC20 payment token (e.g., STRK)
+        payment_token: ContractAddress,
         /// Total number of auctions created
         auction_count: u256,
         // --- Auction fields (keyed by auction_id) ---
@@ -183,7 +230,13 @@ pub mod ShadowBid {
     // =============================================================
 
     #[constructor]
-    fn constructor(ref self: ContractState) {
+    fn constructor(
+        ref self: ContractState,
+        verifier_class_hash: ClassHash,
+        payment_token: ContractAddress,
+    ) {
+        self.verifier_class_hash.write(verifier_class_hash);
+        self.payment_token.write(payment_token);
         self.auction_count.write(0);
     }
 
@@ -237,7 +290,7 @@ pub mod ShadowBid {
         fn submit_bid(
             ref self: ContractState,
             auction_id: u256,
-            bid_commitment: felt252,
+            proof: Span<felt252>,
             deposit: u256,
         ) {
             let caller = get_caller_address();
@@ -254,16 +307,42 @@ pub mod ShadowBid {
             let existing = self.bid_commitment.read((auction_id, caller));
             assert(existing == 0, 'Already submitted a bid');
 
-            // Ensure deposit covers minimum price
-            let min_price = self.auction_min_price.read(auction_id);
-            assert(deposit >= min_price, 'Deposit below minimum');
-
             // Seller cannot bid on own auction
             let seller = self.auction_seller.read(auction_id);
             assert(caller != seller, 'Seller cannot bid');
 
+            // Verify the ZK proof using the Garaga verifier
+            let verifier = IUltraKeccakZKHonkVerifierLibraryDispatcher {
+                class_hash: self.verifier_class_hash.read(),
+            };
+            let result = verifier.verify_ultra_keccak_zk_honk_proof(proof);
+            assert(result.is_ok(), 'Invalid ZK proof');
+
+            // Extract public inputs from the proof result
+            // Public inputs order (from Noir circuit): [min_price, commitment]
+            let public_inputs = result.unwrap();
+            assert(public_inputs.len() >= 2, 'Insufficient public inputs');
+
+            let proof_min_price: u256 = *public_inputs.at(0);
+            let commitment_u256: u256 = *public_inputs.at(1);
+
+            // Verify the proven min_price matches this auction's min_price
+            let auction_min_price = self.auction_min_price.read(auction_id);
+            assert(proof_min_price == auction_min_price, 'min_price mismatch');
+
+            // Extract commitment as felt252
+            let commitment: felt252 = commitment_u256.try_into().expect('Commitment overflow');
+
+            // Ensure deposit covers minimum price
+            assert(deposit >= auction_min_price, 'Deposit below minimum');
+
+            // Transfer deposit tokens from bidder to this contract
+            let token = IERC20Dispatcher { contract_address: self.payment_token.read() };
+            let transferred = token.transfer_from(caller, get_contract_address(), deposit);
+            assert(transferred, 'Token transfer failed');
+
             // Store the commitment and deposit
-            self.bid_commitment.write((auction_id, caller), bid_commitment);
+            self.bid_commitment.write((auction_id, caller), commitment);
             self.bid_deposit.write((auction_id, caller), deposit);
 
             // Increment bid count
@@ -302,16 +381,13 @@ pub mod ShadowBid {
             let already_revealed = self.bid_is_revealed.read((auction_id, caller));
             assert(!already_revealed, 'Already revealed');
 
-            // Verify commitment: hash(bid_amount_low, bid_amount_high, salt) == commitment
-            let bid_amount_low: felt252 = (bid_amount & 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF)
-                .try_into()
-                .unwrap();
-            let bid_amount_high: felt252 = (bid_amount / 0x100000000000000000000000000000000)
-                .try_into()
-                .unwrap();
-            let computed = poseidon_hash_span(
-                array![bid_amount_low, bid_amount_high, salt].span(),
-            );
+            // Verify commitment: pedersen(bid_amount_as_field, salt) == commitment
+            // This matches the Noir circuit's: std::hash::pedersen_hash([bid_amount, salt])
+            let bid_field: felt252 = bid_amount.try_into().expect('Bid amount overflow');
+            let computed = PedersenTrait::new(0)
+                .update(bid_field)
+                .update(salt)
+                .finalize();
             assert(computed == commitment, 'Invalid reveal');
 
             // Verify bid >= min_price
@@ -347,10 +423,29 @@ pub mod ShadowBid {
             let winner = self.auction_winner.read(auction_id);
 
             if highest == 0 || winner.is_zero() {
-                // No valid bids — cancel the auction
+                // No valid bids - cancel the auction
                 self.auction_state.write(auction_id, AuctionState::Cancelled);
             } else {
                 self.auction_state.write(auction_id, AuctionState::Settled);
+
+                // Transfer the winning bid amount to the seller
+                let seller = self.auction_seller.read(auction_id);
+                let token = IERC20Dispatcher { contract_address: self.payment_token.read() };
+                let transferred = token.transfer(seller, highest);
+                assert(transferred, 'Settlement transfer failed');
+
+                // Mark winner's deposit as partially consumed
+                // Winner gets refund of (deposit - winning_bid) via withdraw_refund
+                let winner_deposit = self.bid_deposit.read((auction_id, winner));
+                let refund = winner_deposit - highest;
+                if refund > 0 {
+                    // Update deposit to only the refundable portion
+                    self.bid_deposit.write((auction_id, winner), refund);
+                } else {
+                    // No refund for winner, mark as claimed
+                    self.bid_refund_claimed.write((auction_id, winner), true);
+                }
+
                 self
                     .emit(
                         AuctionSettled { auction_id, winner, winning_bid: highest },
@@ -374,16 +469,12 @@ pub mod ShadowBid {
             let claimed = self.bid_refund_claimed.read((auction_id, caller));
             assert(!claimed, 'Already claimed');
 
-            // Winner doesn't get a refund (their deposit goes to the seller)
-            let winner = self.auction_winner.read(auction_id);
-            if state == AuctionState::Settled {
-                assert(caller != winner, 'Winner cannot refund');
-            }
-
             self.bid_refund_claimed.write((auction_id, caller), true);
 
-            // TODO: Actually transfer the deposit back to the bidder
-            // This will integrate with STRK token transfers
+            // Transfer the deposit back to the bidder
+            let token = IERC20Dispatcher { contract_address: self.payment_token.read() };
+            let transferred = token.transfer(caller, deposit);
+            assert(transferred, 'Refund transfer failed');
 
             self.emit(RefundClaimed { auction_id, bidder: caller, amount: deposit });
         }

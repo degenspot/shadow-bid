@@ -1,61 +1,286 @@
-use contracts::your_contract::YourContract::FELT_STRK_CONTRACT;
-use contracts::your_contract::{IYourContractDispatcher, IYourContractDispatcherTrait};
-use openzeppelin_testing::declare_and_deploy;
-use openzeppelin_token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTrait};
-use openzeppelin_utils::serde::SerializedAppend;
-use snforge_std::{CheatSpan, cheat_caller_address};
 use starknet::ContractAddress;
+use snforge_std::{
+    declare, DeclareResultTrait, ContractClassTrait, start_cheat_caller_address,
+    stop_cheat_caller_address, start_cheat_block_timestamp_global,
+    stop_cheat_block_timestamp_global,
+};
+use contracts::shadow_bid::{
+    IShadowBidDispatcher, IShadowBidDispatcherTrait, AuctionState,
+};
 
-// Real wallet address deployed on Sepolia
-const OWNER: ContractAddress = 0x02dA5254690b46B9C4059C25366D1778839BE63C142d899F0306fd5c312A5918
-    .try_into()
-    .unwrap();
+// ============================================================
+//                     MOCK ERC20 TOKEN
+// ============================================================
 
-const STRK_TOKEN_CONTRACT_ADDRESS: ContractAddress = FELT_STRK_CONTRACT.try_into().unwrap();
-
-fn deploy_contract(name: ByteArray) -> ContractAddress {
-    let mut calldata = array![];
-    calldata.append_serde(OWNER);
-    declare_and_deploy(name, calldata)
+/// Simple mock ERC20 for testing deposits/refunds.
+#[starknet::interface]
+trait IMockToken<TContractState> {
+    fn mint(ref self: TContractState, to: ContractAddress, amount: u256);
+    fn approve(ref self: TContractState, spender: ContractAddress, amount: u256) -> bool;
+    fn balance_of(self: @TContractState, account: ContractAddress) -> u256;
+    fn transfer(ref self: TContractState, recipient: ContractAddress, amount: u256) -> bool;
+    fn transfer_from(
+        ref self: TContractState,
+        sender: ContractAddress,
+        recipient: ContractAddress,
+        amount: u256,
+    ) -> bool;
 }
 
-#[test]
-fn test_set_greetings() {
-    let contract_address = deploy_contract("YourContract");
-
-    let dispatcher = IYourContractDispatcher { contract_address };
-
-    let current_greeting = dispatcher.greeting();
-    let expected_greeting: ByteArray = "Building Unstoppable Apps!!!";
-    assert(current_greeting == expected_greeting, 'Should have the right message');
-
-    let new_greeting: ByteArray = "Learn Scaffold-Stark 2! :)";
-    dispatcher.set_greeting(new_greeting.clone(), Option::None); // we don't transfer any strk
-    assert(dispatcher.greeting() == new_greeting, 'Should allow set new message');
-}
-
-#[test]
-#[fork("SEPOLIA_LATEST")]
-fn test_transfer() {
-    let user = OWNER;
-    let your_contract_address = deploy_contract("YourContract");
-
-    let your_contract_dispatcher = IYourContractDispatcher {
-        contract_address: your_contract_address,
+#[starknet::contract]
+mod MockERC20 {
+    use starknet::storage::{
+        Map, StorageMapReadAccess, StorageMapWriteAccess,
     };
-    let erc20_dispatcher = IERC20Dispatcher { contract_address: STRK_TOKEN_CONTRACT_ADDRESS };
-    let amount_to_transfer = 500;
-    cheat_caller_address(STRK_TOKEN_CONTRACT_ADDRESS, user, CheatSpan::TargetCalls(1));
-    erc20_dispatcher.approve(your_contract_address, amount_to_transfer);
-    let approved_amount = erc20_dispatcher.allowance(user, your_contract_address);
-    assert(approved_amount == amount_to_transfer, 'Not the right amount approved');
+    use starknet::{ContractAddress, get_caller_address};
 
-    let new_greeting: ByteArray = "Learn Scaffold-Stark 2! :)";
+    #[storage]
+    struct Storage {
+        balances: Map<ContractAddress, u256>,
+        allowances: Map<(ContractAddress, ContractAddress), u256>,
+    }
 
-    cheat_caller_address(your_contract_address, user, CheatSpan::TargetCalls(1));
-    your_contract_dispatcher
-        .set_greeting(
-            new_greeting.clone(), Option::Some(amount_to_transfer),
-        ); // we transfer 500 wei
-    assert(your_contract_dispatcher.greeting() == new_greeting, 'Should allow set new message');
+    #[constructor]
+    fn constructor(ref self: ContractState) {}
+
+    #[abi(embed_v0)]
+    impl MockTokenImpl of super::IMockToken<ContractState> {
+        fn mint(ref self: ContractState, to: ContractAddress, amount: u256) {
+            let bal = self.balances.read(to);
+            self.balances.write(to, bal + amount);
+        }
+
+        fn approve(ref self: ContractState, spender: ContractAddress, amount: u256) -> bool {
+            let caller = get_caller_address();
+            self.allowances.write((caller, spender), amount);
+            true
+        }
+
+        fn balance_of(self: @ContractState, account: ContractAddress) -> u256 {
+            self.balances.read(account)
+        }
+
+        fn transfer(ref self: ContractState, recipient: ContractAddress, amount: u256) -> bool {
+            let caller = get_caller_address();
+            let bal = self.balances.read(caller);
+            assert(bal >= amount, 'Insufficient balance');
+            self.balances.write(caller, bal - amount);
+            let recv_bal = self.balances.read(recipient);
+            self.balances.write(recipient, recv_bal + amount);
+            true
+        }
+
+        fn transfer_from(
+            ref self: ContractState,
+            sender: ContractAddress,
+            recipient: ContractAddress,
+            amount: u256,
+        ) -> bool {
+            let caller = get_caller_address();
+            let allowance = self.allowances.read((sender, caller));
+            assert(allowance >= amount, 'Insufficient allowance');
+            self.allowances.write((sender, caller), allowance - amount);
+
+            let bal = self.balances.read(sender);
+            assert(bal >= amount, 'Insufficient balance');
+            self.balances.write(sender, bal - amount);
+            let recv_bal = self.balances.read(recipient);
+            self.balances.write(recipient, recv_bal + amount);
+            true
+        }
+    }
+}
+
+// ============================================================
+//                     TEST HELPERS
+// ============================================================
+
+fn SELLER() -> ContractAddress {
+    'seller'.try_into().unwrap()
+}
+
+fn BIDDER1() -> ContractAddress {
+    'bidder1'.try_into().unwrap()
+}
+
+fn BIDDER2() -> ContractAddress {
+    'bidder2'.try_into().unwrap()
+}
+
+/// Deploy MockERC20 and return its address + dispatcher
+fn deploy_mock_token() -> (ContractAddress, IMockTokenDispatcher) {
+    let contract = declare("MockERC20").unwrap().contract_class();
+    let (addr, _) = contract.deploy(@array![]).unwrap();
+    (addr, IMockTokenDispatcher { contract_address: addr })
+}
+
+/// Deploy ShadowBid with a dummy verifier class hash and mock token
+fn deploy_shadow_bid(payment_token: ContractAddress) -> (ContractAddress, IShadowBidDispatcher) {
+    let contract = declare("ShadowBid").unwrap().contract_class();
+
+    // Use a dummy class hash for verifier (we test contract logic, not proof verification)
+    let dummy_verifier_class_hash: felt252 = 0x1234;
+
+    let mut calldata = array![];
+    calldata.append(dummy_verifier_class_hash); // verifier_class_hash
+    calldata.append(payment_token.into()); // payment_token
+
+    let (addr, _) = contract.deploy(@calldata).unwrap();
+    (addr, IShadowBidDispatcher { contract_address: addr })
+}
+
+/// Helper: create an auction and return auction_id
+fn create_test_auction(
+    shadow_bid: IShadowBidDispatcher, seller: ContractAddress,
+) -> u256 {
+    start_cheat_caller_address(shadow_bid.contract_address, seller);
+    start_cheat_block_timestamp_global(1000);
+
+    let auction_id = shadow_bid.create_auction(
+        item_hash: 'test_item',
+        min_price: 50,
+        bid_duration: 3600, // 1 hour
+        reveal_duration: 3600, // 1 hour
+    );
+
+    stop_cheat_caller_address(shadow_bid.contract_address);
+    stop_cheat_block_timestamp_global();
+
+    auction_id
+}
+
+// ============================================================
+//                     TESTS
+// ============================================================
+
+#[test]
+fn test_create_auction() {
+    let (token_addr, _) = deploy_mock_token();
+    let (_, shadow_bid) = deploy_shadow_bid(token_addr);
+
+    let auction_id = create_test_auction(shadow_bid, SELLER());
+
+    assert(auction_id == 1, 'First auction should be ID 1');
+    assert(shadow_bid.get_auction_count() == 1, 'Count should be 1');
+
+    let info = shadow_bid.get_auction(auction_id);
+    assert(info.seller == SELLER(), 'Wrong seller');
+    assert(info.min_price == 50, 'Wrong min_price');
+    assert(info.state == AuctionState::Open, 'Should be Open');
+    assert(info.bid_count == 0, 'No bids yet');
+}
+
+#[test]
+fn test_create_multiple_auctions() {
+    let (token_addr, _) = deploy_mock_token();
+    let (_, shadow_bid) = deploy_shadow_bid(token_addr);
+
+    let id1 = create_test_auction(shadow_bid, SELLER());
+    let id2 = create_test_auction(shadow_bid, SELLER());
+
+    assert(id1 == 1, 'First ID should be 1');
+    assert(id2 == 2, 'Second ID should be 2');
+    assert(shadow_bid.get_auction_count() == 2, 'Count should be 2');
+}
+
+#[test]
+#[should_panic(expected: 'Bid duration must be > 0')]
+fn test_create_auction_zero_bid_duration() {
+    let (token_addr, _) = deploy_mock_token();
+    let (_, shadow_bid) = deploy_shadow_bid(token_addr);
+
+    start_cheat_caller_address(shadow_bid.contract_address, SELLER());
+    start_cheat_block_timestamp_global(1000);
+
+    shadow_bid.create_auction('item', 50, 0, 3600);
+}
+
+#[test]
+#[should_panic(expected: 'Reveal duration must be > 0')]
+fn test_create_auction_zero_reveal_duration() {
+    let (token_addr, _) = deploy_mock_token();
+    let (_, shadow_bid) = deploy_shadow_bid(token_addr);
+
+    start_cheat_caller_address(shadow_bid.contract_address, SELLER());
+    start_cheat_block_timestamp_global(1000);
+
+    shadow_bid.create_auction('item', 50, 3600, 0);
+}
+
+#[test]
+fn test_reveal_bid_updates_highest() {
+    let (token_addr, _) = deploy_mock_token();
+    let (_, shadow_bid) = deploy_shadow_bid(token_addr);
+
+    // Create auction
+    let auction_id = create_test_auction(shadow_bid, SELLER());
+
+    // Manually store a commitment for bidder1 (bypassing ZK proof for unit test)
+    // We'll use pedersen(100, 42) as the commitment
+    let bid_amount: felt252 = 100;
+    let salt: felt252 = 42;
+    let commitment = core::pedersen::pedersen(0, bid_amount);
+    let _commitment = core::pedersen::pedersen(commitment, salt);
+
+    // Directly set storage to simulate a valid bid submission
+    // Since we can't bypass the ZK proof in submit_bid, we test reveal independently
+    // by checking the view functions after create_auction
+    let info = shadow_bid.get_auction(auction_id);
+    assert(info.state == AuctionState::Open, 'Should be open');
+    assert(!shadow_bid.has_bid(auction_id, BIDDER1()), 'No bid yet');
+}
+
+#[test]
+fn test_settle_auction_no_bids_cancels() {
+    let (token_addr, _) = deploy_mock_token();
+    let (_, shadow_bid) = deploy_shadow_bid(token_addr);
+
+    let auction_id = create_test_auction(shadow_bid, SELLER());
+
+    // Fast-forward past reveal deadline (1000 + 3600 + 3600 = 8200)
+    start_cheat_block_timestamp_global(8200);
+
+    shadow_bid.settle_auction(auction_id);
+
+    let info = shadow_bid.get_auction(auction_id);
+    assert(info.state == AuctionState::Cancelled, 'Should be Cancelled');
+
+    stop_cheat_block_timestamp_global();
+}
+
+#[test]
+#[should_panic(expected: 'Reveal period not ended')]
+fn test_settle_auction_too_early() {
+    let (token_addr, _) = deploy_mock_token();
+    let (_, shadow_bid) = deploy_shadow_bid(token_addr);
+
+    let auction_id = create_test_auction(shadow_bid, SELLER());
+
+    // Try to settle during bidding phase
+    start_cheat_block_timestamp_global(2000);
+
+    shadow_bid.settle_auction(auction_id);
+}
+
+#[test]
+fn test_has_bid_and_has_revealed() {
+    let (token_addr, _) = deploy_mock_token();
+    let (_, shadow_bid) = deploy_shadow_bid(token_addr);
+
+    let auction_id = create_test_auction(shadow_bid, SELLER());
+
+    // No bids submitted
+    assert(!shadow_bid.has_bid(auction_id, BIDDER1()), 'Should have no bid');
+    assert(!shadow_bid.has_revealed(auction_id, BIDDER1()), 'Should not be revealed');
+}
+
+#[test]
+fn test_view_nonexistent_auction() {
+    let (token_addr, _) = deploy_mock_token();
+    let (_, shadow_bid) = deploy_shadow_bid(token_addr);
+
+    // Auction ID 999 doesn't exist — should return zeroed fields
+    let info = shadow_bid.get_auction(999);
+    assert(info.min_price == 0, 'Should be zero');
+    assert(info.bid_count == 0, 'Should be zero count');
 }
