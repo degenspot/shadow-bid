@@ -10,44 +10,37 @@ import {
 import { green, red } from "./helpers/colorize-log";
 
 /**
- * Deploy a contract using the specified parameters.
- *
- * @example (deploy contract with constructorArgs)
- * const deployScript = async (): Promise<void> => {
- *   await deployContract(
- *     {
- *       contract: "YourContract",
- *       contractName: "YourContractExportName",
- *       constructorArgs: {
- *         owner: deployer.address,
- *       },
- *       options: {
- *         maxFee: BigInt(1000000000000)
- *       }
- *     }
- *   );
- * };
- *
- * @example (deploy contract without constructorArgs)
- * const deployScript = async (): Promise<void> => {
- *   await deployContract(
- *     {
- *       contract: "YourContract",
- *       contractName: "YourContractExportName",
- *       options: {
- *         maxFee: BigInt(1000000000000)
- *       }
- *     }
- *   );
- * };
- *
- *
- * @returns {Promise<void>}
+ * Deploy script for ShadowBid and Mocks
  */
 const deployScript = async (): Promise<void> => {
+  // 1. Deploy Mock Verifier
+  const verifierDeployment = await deployContract({
+    contract: "MockVerifier",
+    contractName: "MockVerifier",
+  });
+
+  // 2. Deploy Mock Token
+  const tokenDeployment = await deployContract({
+    contract: "MockToken",
+    contractName: "MockToken",
+  });
+
+  // Calculate addresses or get from return?
+  // deployContract returns { address: string } usually?
+  // Let's check deploy-contract.ts if needed, but usually it returns deployment info.
+  // scaffold-stark deployContract returns { address: string, classHash: string, ... }
+
+  const verifierAddress = verifierDeployment.address;
+  const tokenAddress = tokenDeployment.address;
+
+  // 3. Deploy ShadowBid
   await deployContract({
     contract: "ShadowBid",
     contractName: "ShadowBid",
+    constructorArgs: {
+      verifier_address: verifierAddress,
+      payment_token: tokenAddress
+    }
   });
 };
 
@@ -68,7 +61,7 @@ const main = async (): Promise<void> => {
     } else {
       console.error(err);
     }
-    process.exit(1); //exit with error so that non subsequent scripts are run
+    process.exit(1);
   }
 };
 

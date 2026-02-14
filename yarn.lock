@@ -69,6 +69,20 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@aztec/bb.js@npm:0.58.0":
+  version: 0.58.0
+  resolution: "@aztec/bb.js@npm:0.58.0"
+  dependencies:
+    comlink: ^4.4.1
+    commander: ^10.0.1
+    debug: ^4.3.4
+    tslib: ^2.4.0
+  bin:
+    bb.js: dest/node/main.js
+  checksum: b4e882a6668df737fab6e2223ee6b20ff499e8a0b67c18dcab8109efec47e674c6d8276e8c3b6662289d69f56b6e1d94d3312673fd0ace9909e33ebce7f10cbb
+  languageName: node
+  linkType: hard
+
 "@babel/code-frame@npm:^7.10.4, @babel/code-frame@npm:^7.27.1":
   version: 7.27.1
   resolution: "@babel/code-frame@npm:7.27.1"
@@ -2350,6 +2364,59 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@noir-lang/acvm_js@npm:1.0.0-beta.16":
+  version: 1.0.0-beta.16
+  resolution: "@noir-lang/acvm_js@npm:1.0.0-beta.16"
+  checksum: 3e5430a2ccad9902bff5b3bbaaa726d50f553331941c054016a1a5afe379f38f1394dff8868f733931488dc6cd668a9e74c4ae41ddebfcd2e362ea86e1c11e05
+  languageName: node
+  linkType: hard
+
+"@noir-lang/backend_barretenberg@npm:0.36.0":
+  version: 0.36.0
+  resolution: "@noir-lang/backend_barretenberg@npm:0.36.0"
+  dependencies:
+    "@aztec/bb.js": 0.58.0
+    "@noir-lang/types": 0.36.0
+    fflate: ^0.8.0
+  checksum: a1540ab74829dad6d045bb9863c4dd104617b3caff0603aa5cf766bb71e953c62aba51bb665a0fc37da57db636c1a1a8ae96d421591d2fd4212e8134f3efdfe0
+  languageName: node
+  linkType: hard
+
+"@noir-lang/noir_js@npm:1.0.0-beta.16":
+  version: 1.0.0-beta.16
+  resolution: "@noir-lang/noir_js@npm:1.0.0-beta.16"
+  dependencies:
+    "@noir-lang/acvm_js": 1.0.0-beta.16
+    "@noir-lang/noirc_abi": 1.0.0-beta.16
+    "@noir-lang/types": 1.0.0-beta.16
+    pako: ^2.1.0
+  checksum: 27b28bd1f2621f75f29d9e54d9a6a1d321c84b244e169dd332bf8963b5415f609f1d1ea9603a1cff1dcd8dec6bb6c2b8e80e802200388d2a1b4c5925883eba2e
+  languageName: node
+  linkType: hard
+
+"@noir-lang/noirc_abi@npm:1.0.0-beta.16":
+  version: 1.0.0-beta.16
+  resolution: "@noir-lang/noirc_abi@npm:1.0.0-beta.16"
+  dependencies:
+    "@noir-lang/types": 1.0.0-beta.16
+  checksum: dbe75bee2e20b070a91487bb117e192fb84df60156c5305c6e7cad37b074b3df3888b217d102829a183c40a2578c0d846fb6e9270a3544b424ca1c9d40fb6d83
+  languageName: node
+  linkType: hard
+
+"@noir-lang/types@npm:0.36.0":
+  version: 0.36.0
+  resolution: "@noir-lang/types@npm:0.36.0"
+  checksum: f36e7681409124f093de8e9c5c30504b14a094940dfa17ea2abf337ddbfea10d6324b92af83f71bb3f67d9e3faada6ac821899c8eb1f3db59ac8d7c83a2055a4
+  languageName: node
+  linkType: hard
+
+"@noir-lang/types@npm:1.0.0-beta.16":
+  version: 1.0.0-beta.16
+  resolution: "@noir-lang/types@npm:1.0.0-beta.16"
+  checksum: bf619b168f222774c7325af2ac06f632f15e0f96307ff323832a9b42836be1b51294e822c83af1f8d3174144a2e6a854947d44c8f39ef0b3b66de6190a93b554
+  languageName: node
+  linkType: hard
+
 "@nolyfill/is-core-module@npm:1.0.39":
   version: 1.0.39
   resolution: "@nolyfill/is-core-module@npm:1.0.39"
@@ -3944,6 +4011,9 @@ __metadata:
     "@keplr-wallet/provider-extension": ^0.12.175
     "@keplr-wallet/types": ^0.12.175
     "@keplr-wallet/unit": ^0.12.175
+    "@noir-lang/backend_barretenberg": 0.36.0
+    "@noir-lang/noir_js": 1.0.0-beta.16
+    "@noir-lang/types": 1.0.0-beta.16
     "@radix-ui/react-icons": 1.3.0
     "@radix-ui/themes": 2.0.3
     "@scaffold-stark/stark-burner": ^0.1.13
@@ -6738,6 +6808,20 @@ __metadata:
   languageName: node
   linkType: hard
 
+"comlink@npm:^4.4.1":
+  version: 4.4.2
+  resolution: "comlink@npm:4.4.2"
+  checksum: 35313f26fdd78c202be21be49a7607f57e9e91963399b524676742ee0cf7db589be500d923ed0809b53f37996461186fb345bf867d93236be22bfae3cb7bd07e
+  languageName: node
+  linkType: hard
+
+"commander@npm:^10.0.1":
+  version: 10.0.1
+  resolution: "commander@npm:10.0.1"
+  checksum: 436901d64a818295803c1996cd856621a74f30b9f9e28a588e726b2b1670665bccd7c1a77007ebf328729f0139838a88a19265858a0fa7a8728c4656796db948
+  languageName: node
+  linkType: hard
+
 "commander@npm:^12.1.0":
   version: 12.1.0
   resolution: "commander@npm:12.1.0"
@@ -8354,6 +8438,13 @@ __metadata:
     picomatch:
       optional: true
   checksum: bd537daa9d3cd53887eed35efa0eab2dbb1ca408790e10e024120e7a36c6e9ae2b33710cb8381e35def01bc9c1d7eaba746f886338413e68ff6ebaee07b9a6e8
+  languageName: node
+  linkType: hard
+
+"fflate@npm:^0.8.0":
+  version: 0.8.2
+  resolution: "fflate@npm:0.8.2"
+  checksum: 29470337b85d3831826758e78f370e15cda3169c5cd4477c9b5eea2402261a74b2975bae816afabe1c15d21d98591e0d30a574f7103aa117bff60756fa3035d4
   languageName: node
   linkType: hard
 
@@ -11174,7 +11265,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"pako@npm:^2.0.4":
+"pako@npm:^2.0.4, pako@npm:^2.1.0":
   version: 2.1.0
   resolution: "pako@npm:2.1.0"
   checksum: 71666548644c9a4d056bcaba849ca6fd7242c6cf1af0646d3346f3079a1c7f4a66ffec6f7369ee0dc88f61926c10d6ab05da3e1fca44b83551839e89edd75a3e
@@ -12335,6 +12426,18 @@ __metadata:
   languageName: node
   linkType: hard
 
+"shadow-bid@workspace:.":
+  version: 0.0.0-use.local
+  resolution: "shadow-bid@workspace:."
+  dependencies:
+    daisyui: ^4.7.3
+    husky: ^9.0.11
+    pinst: ^3.0.0
+    postcss: ^8.4.38
+    prettier: ^3.2.5
+  languageName: unknown
+  linkType: soft
+
 "shallow-clone@npm:^3.0.0":
   version: 3.0.1
   resolution: "shallow-clone@npm:3.0.1"
@@ -12637,18 +12740,6 @@ __metadata:
   checksum: b57981c05611afef31605732b598ccf65124a9fcb03b833532659ac4d29ac0f7bfacbc0d6c5a28a03e84c7510e7e556d758d0bb57786e214660016fb94279316
   languageName: node
   linkType: hard
-
-"ss-2@workspace:.":
-  version: 0.0.0-use.local
-  resolution: "ss-2@workspace:."
-  dependencies:
-    daisyui: ^4.7.3
-    husky: ^9.0.11
-    pinst: ^3.0.0
-    postcss: ^8.4.38
-    prettier: ^3.2.5
-  languageName: unknown
-  linkType: soft
 
 "ssri@npm:^12.0.0":
   version: 12.0.0

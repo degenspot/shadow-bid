@@ -43,6 +43,7 @@ const nextConfig = {
         resource.request = resource.request.replace(/^node:/, "");
       }),
     );
+    config.experiments = { ...config.experiments, asyncWebAssembly: true, layers: true }; // Enable WSAM
 
     if (dev && !isServer) {
       config.infrastructureLogging = {
